@@ -3,7 +3,7 @@
 #include <tchar.h>
 #include <iostream>
 
-int _tmain(int argc, TCHAR* argv[]) {
+int __stdcall WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd) {
 	STARTUPINFO			dispatcherStartupInfo{ };	// Startup information for prowin32
 	PROCESS_INFORMATION dispatcherProcessInfo{ };	// Process information for prowin32
 	DWORD				processStatus{ 1 };
