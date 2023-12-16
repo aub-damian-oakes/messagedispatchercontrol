@@ -10,6 +10,7 @@ by either clicking the executable, or by remotely triggering the executable.
 ### Features
 - CPU Limit on Job Object, caps CPU usage of the program at 10%.
 - Recursively monitors child processes created by the application being stopped/started.
+- Silent execution, is run without creating any new windows.
 
 <sub>This repository includes the Visual Studio solution for access across devices.</sub> <br />
 <sub>The backoffice.ico file was taken from Mi9 Retail's Mi9 Store application.</sub>
