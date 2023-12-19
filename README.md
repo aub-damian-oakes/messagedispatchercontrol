@@ -14,3 +14,7 @@ by either clicking the executable, or by remotely triggering the executable.
 
 <sub>This repository includes the Visual Studio solution for access across devices.</sub> <br />
 <sub>The backoffice.ico file was taken from Mi9 Retail's Mi9 Store application.</sub>
+
+### Command Line Options
+`/start` - Specifies start-only action.
+`/stop` - Specifies stop-only action.
