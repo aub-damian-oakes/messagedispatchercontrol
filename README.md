@@ -16,5 +16,5 @@ by either clicking the executable, or by remotely triggering the executable.
 <sub>The backoffice.ico file was taken from Mi9 Retail's Mi9 Store application.</sub>
 
 ### Command Line Options
-`/start` - Specifies start-only action. 
+`/start` - Specifies start-only action. <br /> 
 `/stop` - Specifies stop-only action.
