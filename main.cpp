@@ -3,18 +3,52 @@
 #include <tchar.h>
 #include <iostream>
 
+#define MSG_CONTROL_STOP	0x2
+#define MSG_CONTROL_START	0x1
+
+
 int __stdcall WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd) {
-	STARTUPINFO			dispatcherStartupInfo{ };	// Startup information for prowin32
-	PROCESS_INFORMATION dispatcherProcessInfo{ };	// Process information for prowin32
-	DWORD				processStatus{ 1 };
-	SECURITY_ATTRIBUTES securityAttributes{ };
-	HANDLE				jobProcess{ };
-	SECURITY_DESCRIPTOR jobDescriptor{ }; 
-	EXPLICIT_ACCESS		ea;
-	PACL				acl;
-	DWORD				fResponse = ERROR_SUCCESS;
-	JOBOBJECT_BASIC_PROCESS_ID_LIST currentJobProcesses;
-	JOBOBJECT_CPU_RATE_CONTROL_INFORMATION jobCpuControlRateInformation;
+	STARTUPINFO								dispatcherStartupInfo{ };	// Startup information for prowin32
+	PROCESS_INFORMATION						dispatcherProcessInfo{ };	// Process information for prowin32
+	DWORD									processStatus{ 1 };
+	SECURITY_ATTRIBUTES						securityAttributes{ };
+	HANDLE									jobProcess{ };
+	SECURITY_DESCRIPTOR						jobDescriptor{ }; 
+	EXPLICIT_ACCESS							ea;
+	PACL									acl;
+	DWORD									fResponse	= ERROR_SUCCESS;
+	JOBOBJECT_BASIC_PROCESS_ID_LIST			currentJobProcesses;
+	JOBOBJECT_CPU_RATE_CONTROL_INFORMATION	jobCpuControlRateInformation;
+	DWORD									appControl = 0x0;	// Null initialization
+	int										numArgs = 0;
+
+	LPWSTR cmdLine = GetCommandLineW();
+	LPWSTR* arguments = CommandLineToArgvW(cmdLine, &numArgs);
+
+	/*AllocConsole();
+	freopen("CONOUT$", "w", stdout);*/
+
+	if (numArgs > 1) {
+		for (int i = 0; i < numArgs; i++) {
+			std::wcout << arguments[i];
+			if (wcscmp(arguments[i], L"/stop") == 0) {
+				appControl = (appControl | MSG_CONTROL_STOP);
+				std::cout << "STOP";
+			}
+			if (wcscmp(arguments[i], L"/start") == 0) {
+				appControl = (appControl | MSG_CONTROL_START);
+				std::cout << "START";
+			}
+		}
+		if (appControl == 0x0) {
+			std::cout << "No valid arguments found. Performing full reboot. ";
+			appControl = (MSG_CONTROL_STOP | MSG_CONTROL_START);
+		}
+	}
+	else {
+		appControl = (MSG_CONTROL_STOP | MSG_CONTROL_START);
+		std::cout << "NO ARGS";
+	}
 
 	/**
 	* We're going to start by initializing all of our data structures. We need to zero their memory to make
@@ -37,8 +71,8 @@ int __stdcall WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 	// Mark data size of startup info structure.
 	dispatcherStartupInfo.cb = sizeof dispatcherStartupInfo;
 
-	// Assign all access permissions to the ACE to be assigned to "jobProcess". Allow only the 
-	// "Administrators" user group to execute.
+	// Assign all access permissions to the ACE to be assigned to "jobProcess". Allow the 
+	// "Everyone" user group to execute, so that the "Aubuchon" user can use this.
 	ea.grfAccessPermissions = JOB_OBJECT_ALL_ACCESS;
 	ea.grfAccessMode		= GRANT_ACCESS;
 	ea.grfInheritance		= NO_INHERITANCE;
@@ -99,115 +133,120 @@ int __stdcall WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 	* creating our processes and assigning them to the job. We start with stopping message dispatcher.
 	*/
 
-	// Create our handle to stopappl.exe
-	if (!CreateProcessW(
-		(LPWSTR)L"D:/stopappl.exe",
-		(LPWSTR)L" -backoffice", // Only stop back office
-		NULL,
-		NULL,
-		FALSE,
-		CREATE_SUSPENDED | CREATE_NO_WINDOW | NORMAL_PRIORITY_CLASS,
-		NULL,
-		(LPWSTR)L"D:/",
-		&dispatcherStartupInfo,
-		&dispatcherProcessInfo
-	)) {
-		std::cout << "Couldn't create process. " << GetLastError();
-		return 100;
-	}
+	if (appControl & MSG_CONTROL_STOP) {
+		// Create our handle to stopappl.exe
+		if (!CreateProcessW(
+			(LPWSTR)L"D:/stopappl.exe",
+			(LPWSTR)L" -backoffice", // Only stop back office
+			NULL,
+			NULL,
+			FALSE,
+			CREATE_SUSPENDED | CREATE_NO_WINDOW | NORMAL_PRIORITY_CLASS,
+			NULL,
+			(LPWSTR)L"D:/",
+			&dispatcherStartupInfo,
+			&dispatcherProcessInfo
+		)) {
+			std::cout << "Couldn't create process. " << GetLastError();
+			return 100;
+		}
 
-	// Try to assign process to our job object.
-	fResponse = AssignProcessToJobObject(jobProcess, dispatcherProcessInfo.hProcess);
+		// Try to assign process to our job object.
+		fResponse = AssignProcessToJobObject(jobProcess, dispatcherProcessInfo.hProcess);
 
-	if (fResponse == 0) {
-		std::cout << "Unable to assign process to job object. " << GetLastError();
-		CloseHandle(jobProcess);
-		CloseHandle(dispatcherProcessInfo.hThread);
-		CloseHandle(dispatcherProcessInfo.hProcess);
-		return 300;
-	}
-
-	// Resume the application stop process.
-	ResumeThread(dispatcherProcessInfo.hThread);
-
-	// Query the number of running processes. We will continue to check until there are no process IDs left
-	// in the job object. 
-	do {
-		if ((QueryInformationJobObject(jobProcess,
-			JobObjectBasicProcessIdList,
-			&currentJobProcesses,
-			sizeof(JOBOBJECT_BASIC_PROCESS_ID_LIST),
-			NULL) == NULL) && GetLastError() != ERROR_MORE_DATA) {
-			std::cout << "Unable to get Job Process information. " << GetLastError();
-			TerminateJobObject(jobProcess, 4);
+		if (fResponse == 0) {
+			std::cout << "Unable to assign process to job object. " << GetLastError();
 			CloseHandle(jobProcess);
 			CloseHandle(dispatcherProcessInfo.hThread);
 			CloseHandle(dispatcherProcessInfo.hProcess);
 			return 300;
 		}
-	} while (currentJobProcesses.NumberOfProcessIdsInList > 0);
 
-	// Once message dispatcher has stopped, close the handles for dispatcherProcessInfo so we can reassign the
-	// structure to a new process. After that, we create the new process with the CREATE_SUSPENDED flag so 
-	// it doesn't run before we can assign it to the job. Then, we assign it to the job.
+		// Resume the application stop process.
+		ResumeThread(dispatcherProcessInfo.hThread);
 
-	CloseHandle(dispatcherProcessInfo.hThread);
-	CloseHandle(dispatcherProcessInfo.hProcess);
+		// Query the number of running processes. We will continue to check until there are no process IDs left
+		// in the job object. 
+		do {
+			if ((QueryInformationJobObject(jobProcess,
+				JobObjectBasicProcessIdList,
+				&currentJobProcesses,
+				sizeof(JOBOBJECT_BASIC_PROCESS_ID_LIST),
+				NULL) == NULL) && GetLastError() != ERROR_MORE_DATA) {
+				std::cout << "Unable to get Job Process information. " << GetLastError();
+				TerminateJobObject(jobProcess, 4);
+				CloseHandle(jobProcess);
+				CloseHandle(dispatcherProcessInfo.hThread);
+				CloseHandle(dispatcherProcessInfo.hProcess);
+				return 300;
+			}
+		} while (currentJobProcesses.NumberOfProcessIdsInList > 0);
 
-	if (!CreateProcessW((LPCWSTR)L"D:/Progress/OpenEdge/bin/prowin32.exe",
-		(LPWSTR)L" -p D:/mi9store/obj/s3/strtbackoff.p",
-		NULL,
-		NULL,
-		FALSE,
-		CREATE_SUSPENDED | CREATE_NO_WINDOW | NORMAL_PRIORITY_CLASS,
-		NULL,
-		(LPCWSTR)L"D:/",
-		&dispatcherStartupInfo,
-		&dispatcherProcessInfo)) {
-		std::cout << "Couldn't create process. " << GetLastError();
-		return 100;
-	}
+		// Once message dispatcher has stopped, close the handles for dispatcherProcessInfo so we can reassign the
+		// structure to a new process. After that, we create the new process with the CREATE_SUSPENDED flag so 
+		// it doesn't run before we can assign it to the job. Then, we assign it to the job.
 
-	fResponse = AssignProcessToJobObject(jobProcess, dispatcherProcessInfo.hProcess);
-
-	if (fResponse == 0) {
-		std::cout << "Unable to assign process to job object. " << GetLastError();
-		CloseHandle(jobProcess);
 		CloseHandle(dispatcherProcessInfo.hThread);
 		CloseHandle(dispatcherProcessInfo.hProcess);
-		return 300;
 	}
 
-	// Sleep for a couple of seconds after the new process is assigned.
-	Sleep(2000);
+	if (appControl & MSG_CONTROL_START) {
+		if (!CreateProcessW((LPCWSTR)L"D:/Progress/OpenEdge/bin/prowin32.exe",
+			(LPWSTR)L" -p D:/mi9store/obj/s3/strtbackoff.p",
+			NULL,
+			NULL,
+			FALSE,
+			CREATE_SUSPENDED | CREATE_NO_WINDOW | NORMAL_PRIORITY_CLASS,
+			NULL,
+			(LPCWSTR)L"D:/",
+			&dispatcherStartupInfo,
+			&dispatcherProcessInfo)) {
+			std::cout << "Couldn't create process. " << GetLastError();
+			return 100;
+		}
 
-	// Start the thread back up for the new process. This time, instead of querying *while* the process ID
-	// list length is greater than 0, we're going to query *until* it's greater than 0. We do this because
-	// the back office startup is going to create many child processes while things start up, and we want to
-	// make sure the child processes come back up.
+		fResponse = AssignProcessToJobObject(jobProcess, dispatcherProcessInfo.hProcess);
 
-	ResumeThread(dispatcherProcessInfo.hThread);
-
-	do {
-		if ((QueryInformationJobObject(jobProcess,
-			JobObjectBasicProcessIdList,
-			&currentJobProcesses,
-			sizeof(JOBOBJECT_BASIC_PROCESS_ID_LIST),
-			NULL) == NULL) && GetLastError() != ERROR_MORE_DATA) {
-			std::cout << "Unable to get Job Process information. " << GetLastError();
-			TerminateJobObject(jobProcess, 4);
+		if (fResponse == 0) {
+			std::cout << "Unable to assign process to job object. " << GetLastError();
 			CloseHandle(jobProcess);
 			CloseHandle(dispatcherProcessInfo.hThread);
 			CloseHandle(dispatcherProcessInfo.hProcess);
 			return 300;
 		}
-	} while (currentJobProcesses.NumberOfProcessIdsInList < 1);
+
+		// Sleep for a couple of seconds after the new process is assigned.
+		Sleep(2000);
+
+		// Start the thread back up for the new process. This time, instead of querying *while* the process ID
+		// list length is greater than 0, we're going to query *until* it's greater than 0. We do this because
+		// the back office startup is going to create many child processes while things start up, and we want to
+		// make sure the child processes come back up.
+
+		ResumeThread(dispatcherProcessInfo.hThread);
+
+		do {
+			if ((QueryInformationJobObject(jobProcess,
+				JobObjectBasicProcessIdList,
+				&currentJobProcesses,
+				sizeof(JOBOBJECT_BASIC_PROCESS_ID_LIST),
+				NULL) == NULL) && GetLastError() != ERROR_MORE_DATA) {
+				std::cout << "Unable to get Job Process information. " << GetLastError();
+				TerminateJobObject(jobProcess, 4);
+				CloseHandle(jobProcess);
+				CloseHandle(dispatcherProcessInfo.hThread);
+				CloseHandle(dispatcherProcessInfo.hProcess);
+				return 300;
+			}
+		} while (currentJobProcesses.NumberOfProcessIdsInList < 1);
 
 
-	// From here, the restart was completed successfully. We're going to clean up all of our handles.
+		// From here, the restart was completed successfully. We're going to clean up all of our handles.
+
+		CloseHandle(dispatcherProcessInfo.hThread);
+		CloseHandle(dispatcherProcessInfo.hProcess);
+	}
 
 	CloseHandle(jobProcess);
-	CloseHandle(dispatcherProcessInfo.hThread);
-	CloseHandle(dispatcherProcessInfo.hProcess);
 	return 0;
 }
